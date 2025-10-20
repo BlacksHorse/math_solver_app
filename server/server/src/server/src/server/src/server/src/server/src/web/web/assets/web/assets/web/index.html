@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mathify — Step-by-Step Solver</title>
+  <link rel="stylesheet" href="./assets/style.css" />
+  <script defer src="./assets/lang.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <h1 id="t_title">Mathify</h1>
+    <small id="t_subtitle">10 free solves • then subscribe</small>
+    <div class="lang">
+      <select id="langSel">
+        <option value="en">EN</option>
+        <option value="fr">FR</option>
+      </select>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="card">
+      <label class="label" id="t_typeProblem">Type your problem</label>
+      <textarea id="problem" placeholder="e.g., 2x + 4 = 10" rows="3"></textarea>
+      <div class="actions">
+        <button id="solveBtn">Solve</button>
+        <label class="uploadBtn" id="t_upload">
+          <input id="imageInput" type="file" accept="image/*">Upload Image
+        </label>
+      </div>
+      <div id="status" class="status"></div>
+      <div class="limits"><span id="t_usesLeft">Uses left</span>: <b id="usesLeftVal">—</b> | <span id="subState">free</span></div>
+    </section>
+
+    <section class="card">
+      <h2 id="t_steps">Step-by-step solution</h2>
+      <ol id="steps"></ol>
+      <div id="answer" class="answer"></div>
+    </section>
+
+    <section class="card paywall">
+      <h3 id="t_needMore">Need more solves?</h3>
+      <p id="t_unlimited">Get unlimited access with a monthly plan.</p>
+      <input id="email" type="email" placeholder="Email for receipt" />
+      <button id="subscribeBtn">Subscribe</button>
+    </section>
+  </main>
+
+  <script>
+    // Language
+    const $ = (id)=>document.getElementById(id);
+    function applyLang(k){
+      const t=L[k];
+      $('t_title').textContent=t.title;
+      $('t_subtitle').textContent=t.subtitle;
+      $('t_typeProblem').textContent=t.typeProblem;
+      $('solveBtn').textContent=t.solve;
+      $('t_upload').lastChild.textContent=t.upload;
+      $('t_steps').textContent=t.steps;
+      $('t_needMore').textContent=t.needMore;
+      $('t_unlimited').textContent=t.unlimited;
+      $('email').placeholder=t.email;
+      $('subscribeBtn').textContent=t.subscribe;
+      $('t_usesLeft').textContent=t.usesLeft;
+      $('subState').textContent = $('subState').textContent==='subscribed'? t.stateSub : t.stateFree;
+    }
+    window.addEventListener('DOMContentLoaded',()=>{
+      applyLang('en');
+      $('langSel').addEventListener('change', e=>applyLang(e.target.value));
+    });
+
+    // API: swap after backend goes live on Render
+    const API = (location.hostname==='localhost')
+      ? 'http://localhost:8080/api'
+      : 'https://YOUR-RENDER-API.onrender.com/api';
+
+    let userId = localStorage.getItem('mathify_uid');
+    async function fetchMe(){
+      const res = await fetch(API + '/me', { headers: userId? {'X-User-Id':userId} : {} });
+      userId = res.headers.get('X-User-Id') || userId;
+      if(userId) localStorage.setItem('mathify_uid', userId);
+      return res.json();
+    }
+    function setStatus(msg, err=false){ const el=$('status'); el.textContent=msg||''; el.className='status'+(err?' error':''); }
+    function renderUsage({usesLeft, subscribed}){ $('usesLeftVal').textContent = subscribed ? '∞' : usesLeft; $('subState').textContent = subscribed ? 'subscribed' : 'free'; }
+
+    async function init(){ renderUsage(await fetchMe()); }
+    $('solveBtn').addEventListener('click', async ()=>{
+      setStatus('Solving…');
+      const problem = $('problem').value.trim();
+      if(!problem) return setStatus('Please type a problem.', true);
+      const res = await fetch(API + '/solve', {
+        method:'POST', headers:{'Content-Type':'application/json','X-User-Id':userId},
+        body: JSON.stringify({ problem })
+      });
+      const data = await res.json();
+      if(!res.ok && data.paywall){ renderUsage({usesLeft:0,subscribed:false}); return setStatus('Free trial finished. Please subscribe.', true); }
+      if(!res.ok) return setStatus(data.error||'Error', true);
+      renderUsage({usesLeft:data.usesLeft, subscribed:data.subscribed});
+      const stepsEl = $('steps'); stepsEl.innerHTML=''; (data.steps||[]).forEach(s=>{ const li=document.createElement('li'); li.textContent=s; stepsEl.appendChild(li); });
+      $('answer').textContent = data.answer!=null ? 'Answer: ' + (typeof data.answer==='object'? JSON.stringify(data.answer) : data.answer) : '';
+      setStatus('');
+    });
+    $('imageInput').addEventListener('change', async ev=>{
+      const file = ev.target.files?.[0]; if(!file) return;
+      setStatus('Uploading…');
+      const fd=new FormData(); fd.append('image', file);
+      const res = await fetch(API + '/upload', { method:'POST', headers:{'X-User-Id':userId}, body: fd });
+      const data = await res.json();
+      if(!res.ok && data.paywall){ renderUsage({usesLeft:0,subscribed:false}); return setStatus('Free trial finished. Please subscribe.', true); }
+      if(!res.ok) return setStatus(data.error||'Upload failed', true);
+      renderUsage({usesLeft:data.usesLeft, subscribed:data.subscribed});
+      setStatus(data.note || 'Image received.');
+    });
+    $('subscribeBtn').addEventListener('click', async ()=>{
+      const email = $('email').value.trim();
+      if(!email) return setStatus('Enter your email.', true);
+      setStatus('Starting checkout…');
+      const res = await fetch(API + '/subscribe', {
+        method:'POST',
+        headers:{'Content-Type':'application/json','X-User-Id':userId},
+        body: JSON.stringify({ email, amountSmallestUnit: 2000*100 })
+      });
+      const data = await res.json();
+      if(!res.ok || !data.ok) return setStatus(data.error||'Checkout error', true);
+      location.href = data.authorization_url; // demo link for now
+    });
+    init();
+  </script>
+</body>
+      </html>
